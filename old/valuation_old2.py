@@ -378,7 +378,7 @@ class Valuation:
 
     def _D(self, tau):
         return (1 - np.exp(-self.alpha * tau))/2
-
+          
 
 
 
@@ -391,22 +391,86 @@ class Valuation:
                     + 2 * self.eta[0] * self.zeta ** 2 / self.alpha ** 3
                     - 2 * self.zeta * temp
         )
-        beta_j = np.array([beta, theta - beta])
+        beta = np.array([beta, theta - beta])
 
         # j = 1, 2 -> (2 x m) dimensional matrices
-        g_j = 2 * beta_j - theta + 1
+        g_j = 2 * beta - theta + 1
         kappa = self.zeta / (self.alpha ** 2) * np.sqrt(1-self.rho ** 2)
         h_j = 1/2 - 1.0j/2 * self.rho / np.sqrt(1 - self.rho ** 2) # m dim
         d_j = g_j / 2 - 0.5j * self.rho / np.sqrt(1 - self.rho ** 2) \
               * (self.zeta / (self.alpha ** 2) * (1 - self.alpha * self.eta[0]) - self.rho * (theta - 1))
 
-        alpha_bar = 2 * beta - theta + 1
-        beta_bar = self.rho * self.zeta / self.alpha ** 2
-        gamma_bar = self.zeta * self.rho * beta / self.alpha ** 2 - self.zeta ** 2 / (2 * self.alpha ** 4) * (1 - self.alpha * self.lamb)
+        M_1_j_k = []
+        M_2_j_k = []
+        for j in [0, 1]:
+            M_1_j_k.append(
+                [complex(1 + hyp1f1(d_j[j][state], g_j[j][state], 1.0j * kappa[state] * np.exp(-self.alpha[state] * tau)))
+                 for state in [0, 1]]
+            )
+            M_2_j_k.append(
+                [complex(
+                    1 + hyp1f1(d_j[j][state]+1, g_j[j][state]+1, 1.0j * kappa[state] * np.exp(-self.alpha[state] * tau)))
+                 for state in [0, 1]]
+            )
 
+        def _find_c(_variables, k, show_constants=False):
+            r1, c1 = _variables
+            M_1_j_k = []
+            M_2_j_k = []
+            for j in [0, 1]:
+                M_1_j_k.append(
+                    [complex(1 + hyp1f1(d_j[j][state], g_j[j][state], 1.0j * kappa[state]))
+                     for state in [0, 1]]
+                )
+                M_2_j_k.append(
+                    [complex(1 + hyp1f1(d_j[j][state] + 1, g_j[j][state] + 1, 1.0j * kappa[state]))
+                        for state in [0, 1]]
+                )
 
+            temp_a = - j * kappa[k] * h_j
+            temp_c1 = (beta[0][k] * M_1_j_k[0][k] + 1j * kappa[k] * d_j[0][k] / g_j[0][k] * M_2_j_k[0][k])
+            temp_c2 = (beta[1][k] * M_1_j_k[1][k] + 1j * kappa[k] * d_j[1][k] / g_j[1][k] * M_2_j_k[1][k])
 
-        return 0
+            variable2 = - (temp_a * M_1_j_k[1][k] + temp_c2) / (temp_a * M_1_j_k[0][k] + temp_c1) * complex(r1, c1)
+            r2, c2 = variable2.real, variable2.imag
+            #
+            # zero1 = temp_a \
+            #         + (complex(r1, c1) * temp_c1 + complex(r2, c2) * temp_c2) \
+            #         / (complex(r1, c1) *  M_1_j_k[0][k] + complex(r2, c2) *  M_1_j_k[1][k])
+
+            temp_c12 = beta[0][k] * M_1_j_k[0][k] \
+                       + 1j * kappa[k] * d_j[0][k] / g_j[0][k] * M_2_j_k[0][k] * np.exp(-self.alpha[k] * tau)
+            temp_c22 = beta[1][k] * M_1_j_k[1][k] \
+                       + 1j * kappa[k] * d_j[1][k] / g_j[1][k] * M_2_j_k[1][k] * np.exp(-self.alpha[k] * tau)
+
+            zero2 = temp_a * np.exp(self.alpha[k] * tau) \
+                    + (complex(r1, c1) * np.exp(-beta[0][k] * self.alpha[k] * tau) * temp_c12
+                                + complex(r2, c2) * np.exp(-beta[1][k] * self.alpha[k] * tau) * temp_c22) \
+                    / (complex(r1, c1) *  M_1_j_k[0][k] * np.exp(-beta[0][k] * self.alpha[k] * tau)
+                       + complex(r2, c2) *  M_1_j_k[1][k] * np.exp(-beta[1][k] * self.alpha[k] * tau))
+            if show_constants:
+                return r1, c1, r2, c2
+            else:
+                return zero2.imag
+
+        _find_c([1, 1], 1)
+        wrapper = lambda variables: np.sum(np.array(_find_c(variables, 1)) ** 2)
+        variables = np.array([root(_find_c, x0=np.array([1, 1, 1, 1]), args=(state,), maxfev=10000) for state in [0, 1]])
+
+        c_1 = np.array([complex(variables[0, 0], variables[0, 1]), complex(variables[1, 0], variables[1, 1])])
+        c_2 = np.array([complex(variables[0, 2], variables[0, 3]), complex(variables[1, 2], variables[1, 3])])
+
+        temp1 = c_1 * np.exp(-beta[0] * self.alpha * tau) \
+                * (beta[0] * M_1_j_k[0] + 1j * kappa * np.exp(-self.alpha * tau) * d_j[0]/g_j[0] * M_2_j_k[0]) \
+                + c_2 * np.exp(-beta[1] * self.alpha * tau) \
+                * (beta[1] * M_1_j_k[1] + 1j * kappa * np.exp(-self.alpha * tau) * d_j[1]/g_j[1] * M_2_j_k[1])
+        temp2 = c_1 * np.exp(beta[0] * self.alpha * tau) * M_1_j_k[0] \
+                + c_2 * np.exp(beta[1] * self.alpha * tau) * M_1_j_k[1]
+
+        temp = - 2j * self.alpha * kappa * h_j / (self.zeta ** 2) * np.exp(self.alpha * tau) \
+               + 2 * self.alpha / (self.zeta ** 2) * temp1 / temp2
+
+        return temp
 
     def _K(self, tau):
         def _integrand(t, state):
