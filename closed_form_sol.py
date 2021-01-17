@@ -2,15 +2,14 @@ import numpy as np
 from scipy import integrate, stats
 import scipy.special as sc
 from utils import _fixed_point, _normal_cdf
-from scipy.optimize import root, fsolve
-from mpmath import hyp1f1
-from mystic.solvers import BuckshotSolver
+import math
+from tqdm import tqdm
 
 
 class Valuation:
 
     def __init__(self, m=2, maturity=1,
-                 Q=np.array([[-1, 1], [0.5, -0.5]]),
+                 Q=np.array([[-0.5, 0.5], [0.6, -0.6]]),
                  d=np.array([0.05, 0.03]),
                  sigma_e=np.array([0.13, 0.26]),
                  c_r=np.array([-0.48, -0.432]),
@@ -111,7 +110,7 @@ class Valuation:
         d2 = mu_C / (sigma_C * (self.maturity ** (1/2)))
         d2 = rv.cdf(d2)
         if boundary:
-            S_T * d1 - P_T * d2
+            return S_T * d1 - P_T * d2
         else:
             return (S_T * d1 - P_T * d2) * self.prob_dist_occupation(v_h, state)
 
@@ -119,10 +118,14 @@ class Valuation:
         europe_ex2 = []
         for state in [0, 1]:
             europe_ex = integrate.quad(self._integrand_euro, 0, self.maturity, args=(state, False,))[0]
+            # a = self._integrand_euro(0, state=state, boundary=True)
+            # a = self._integrand_euro(self.maturity, state=state, boundary=True)
+            # a = self.prob_dist_occupation(0, state)
+            # a = self.prob_dist_occupation(self.maturity, state)
             temp = europe_ex \
-                   + self._integrand_euro(0, state=None, boundary=True) \
+                   + self._integrand_euro(0, state=state, boundary=True) \
                    * self.prob_dist_occupation(0, state) \
-                   + self._integrand_euro(self.maturity, state=None, boundary=True) \
+                   + self._integrand_euro(self.maturity, state=state, boundary=True) \
                    * self.prob_dist_occupation(self.maturity, state)
             europe_ex2.append(temp)
 
@@ -134,7 +137,6 @@ class Valuation:
         c_bar_h, c_bar_l = self.c_bar
         sigma_h, sigma_l = self.sigma_e * np.sqrt((1 - np.exp(-2 * self.sigma_e * self.maturity)) / (2 * self.sigma_e))
         sigma_C = (sigma_h * v_h + sigma_l * v_l) / self.maturity
-
         temp = (np.log(1/q * self.S_0 / self.bond_price[state]) - (d_h * v_h + d_l * v_l) + (c_bar_h * v_h + c_bar_l * v_l)) \
                + 0.5 * sigma_C ** 2 * maturity
         temp /= sigma_C * np.sqrt(maturity)
@@ -194,7 +196,7 @@ class Valuation:
             for state in [0, 1]:
                 american_ex = self.S_0 * integrate.quad(_integrand_american_S, 0, self.maturity, args=(state,))[0] \
                               + self.bond_price[state] * integrate.quad(_integrand_american_P, 0, self.maturity, args=(state,))[0]
-                temp = american_ex[0] \
+                temp = american_ex \
                        + (_integrand_american_S(0, state) + _integrand_american_P(0, state)) \
                        * self.prob_dist_occupation(0, state) \
                        + (_integrand_american_S(self.maturity, state) + _integrand_american_P(self.maturity, state)) \
@@ -227,7 +229,7 @@ class Valuation:
                                  self._d_1(1, 2 / 3 * v_h, 2 / 3 * self.maturity, state)],
                                 dim=2)
                      ),
-                    guess=1
+                    guess=2, n=100
                 )
                 r_critical_23 = (1 - np.exp(- 1/3 * (c_bar_h * v_h + c_bar_l * v_l))
                              * _normal_cdf(self._d_1(1, 2/3* v_h, 2/3* self.maturity, state), dim=1)) \
@@ -235,6 +237,8 @@ class Valuation:
                                * _normal_cdf(self._d_2(1, 2/3* v_h, 2/3* self.maturity, state), dim=1))
 
                 N_1 = _normal_cdf(self._d_1(r_critical_13, v_h/3, self.maturity/3, state), dim=1)
+                if math.isnan(N_1):
+                    _normal_cdf(self._d_1(r_critical_13, v_h / 3, self.maturity / 3, state), dim=1)
                 N_2 = _normal_cdf(
                     [-self._d_1(r_critical_13, v_h/3, self.maturity/3, state),
                      self._d_1(1, 2/3*v_h, self.maturity * 2/3, state)],
@@ -253,7 +257,7 @@ class Valuation:
                         + np.exp(-(d_h * v_h + d_l * v_l)) * N_3
                 )
 
-            def omega_2(v_h):
+            def omega_2(v_h, state):
                 v_l = self.maturity - v_h
                 d_h, d_l = self.d
                 c_bar_h, c_bar_l = self.c_bar
@@ -278,7 +282,7 @@ class Valuation:
                                  self._d_1(1, 2 / 3 * v_h, 2 / 3 * self.maturity, state)],
                                 dim=2)
                      ),
-                    guess=1
+                    guess=2, n=100
                 )
                 r_critical_23 = (1 - np.exp(- 1 / 3 * (c_bar_h * v_h + c_bar_l * v_l))
                              * _normal_cdf(self._d_1(1, 2 / 3 * v_h, 2 / 3 * self.maturity, state), dim=1)) \
@@ -286,6 +290,8 @@ class Valuation:
                                * _normal_cdf(self._d_2(1, 2 / 3 * v_h, 2 / 3 * self.maturity, state), dim=1))
 
                 N_1 = _normal_cdf(self._d_2(r_critical_13, v_h / 3, self.maturity / 3, state), dim=1)
+                if math.isnan(N_1):
+                    _normal_cdf(self._d_1(r_critical_13, v_h / 3, self.maturity / 3, state), dim=1)
                 N_2 = _normal_cdf(
                     [-self._d_2(r_critical_13, v_h / 3, self.maturity / 3, state),
                      self._d_2(1, 2 / 3 * v_h, self.maturity * 2 / 3, state)],
@@ -321,7 +327,7 @@ class Valuation:
                        * self.prob_dist_occupation(self.maturity, state)
                 result.append(temp)
 
-        return result
+        return np.array(result)
 
     def bond(self, default_free=False):
 
@@ -335,9 +341,11 @@ class Valuation:
             M_c = self._mathcal_M(np.exp(self.c_r + self.c_s - temp[0] - temp[1]), 1)
             temp = self._A(0, self.maturity) + self._A(1, self.maturity) \
                    + self._B(0, self.maturity) * self.f_star[0] + self._B(1, self.maturity) * self.f_star[1]
+            temp2 = self._F(self.maturity)
+
             temp += -self.s_star * self._D(self.maturity) \
-                    + self.nu * self._F(self.maturity) \
-                    + self._K(self.maturity)
+                    + self.nu * temp2[0] \
+                    + temp2[1]
 
         temp = M_c * np.exp(temp)
         return np.array(temp)
@@ -364,23 +372,22 @@ class Valuation:
         return np.array(result)
 
     def _B(self, j, tau):
-        return (1 - np.exp(self.phi[j] * tau)) / self.phi[j]
+        return (1 - np.exp(-self.phi[j] * tau)) / self.phi[j]
 
     def _A(self, j, tau):
-        def _a_j(u, k):
-            a_bar_j = [self.mu_r[j][i] * (1 + self.delta[j]) * self._B(j, u)
-                       - 1 / 2 * ((1 + self.delta[j]) * self.sigma_r[j][i] * self._B(j, u)) ** 2 for i in range(self.m)]
-            _a_j = np.diag(a_bar_j) - self.Q.transpose()
-            _a_j = np.matmul(_a_j, np.array([1, 1]))
-            return _a_j[k]
-        temp = [integrate.quad(func=_a_j, a=0, b=tau, args=(k, ))[0] for k in range(self.m)]
-        return np.log(temp)
+        n = 1000
+        dt = tau/n
+        C1 = np.ones(n+1)
+        C2 = np.ones(n+1)
+        for i in range(1, n+1):
+            temp = - (0.5 * self.sigma_r[j] ** 2 * self._B(j, dt * (i-1)) ** 2 - self.mu_r[j] * self.phi[j])
+            C1[i] = C1[i - 1] * (1 + temp[0] * dt) + (self.lambda_l * C2[i - 1] - self.lambda_h * C1[i - 1]) * dt
+            C2[i] = C2[i - 1] * (1 + temp[1] * dt) + (self.lambda_l * C2[i - 1] - self.lambda_h * C1[i - 1]) * dt
+
+        return np.log([C1[-1], C2[-1]])
 
     def _D(self, tau):
         return (1 - np.exp(-self.alpha * tau))/2
-
-
-
 
     def _F(self, tau):
         theta = (self.gamma + self.zeta * self.eta[1]) / self.alpha + self.rho * self.zeta / self.alpha
@@ -402,20 +409,173 @@ class Valuation:
 
         alpha_bar = 2 * beta - theta + 1
         beta_bar = self.rho * self.zeta / self.alpha ** 2
-        gamma_bar = self.zeta * self.rho * beta / self.alpha ** 2 - self.zeta ** 2 / (2 * self.alpha ** 4) * (1 - self.alpha * self.lamb)
+        gamma_bar = self.zeta * self.rho * beta / self.alpha ** 2 \
+                    - self.zeta ** 2 / (2 * self.alpha ** 4) * (1 - self.alpha * self.eta[0])
+        delta_bar = self.zeta ** 2 / (4 * self.alpha ** 4)
 
+        def _Q_part(x, c, n, derivative=False):
+            """
+            :param x: (m X 1)
+            :param c: (m X 1)
+            :param n:
+            :param derivative:
+            :return:
+            """
+            a_0 = np.ones(self.m)
+            a_1 = - (beta_bar * c + gamma_bar) * a_0 / (1+c) / (alpha_bar + c)
+            epsilon_bar = beta_bar * c + gamma_bar
+            a_2 = ((beta_bar + epsilon_bar) * epsilon_bar - delta_bar * (1 + c) * (alpha_bar + c)) \
+                  / ((1+c) * (2+c) * (alpha_bar + c) * (alpha_bar + c + 1)) * a_0
+            a_3 = (
+                    -epsilon_bar * (beta_bar + epsilon_bar) * (2 * beta_bar + epsilon_bar)
+                    - ((2 * beta_bar + epsilon_bar) * (1 + c) * (alpha_bar + c)
+                       + epsilon_bar * (2 + c) * (alpha_bar + c + 1))
+            ) / (
+                    (1 + c) * (2 + c) * (3 + c) * (alpha_bar + c) * (alpha_bar + c + 1) * (alpha_bar + c + 2)
+            )
 
+            a_series = [a_0, a_1, a_2, a_3]
+            for i in range(4, n + 1):
+                temp = (-((i-1) * beta_bar + epsilon_bar) * a_series[i-1] - delta_bar * a_series[i-2]) \
+                       / (i+c) / (alpha_bar + c + i - 1)
+                a_series.append(temp)
+            a_series = np.array(a_series)
 
-        return 0
+            if derivative:
+                x_series = (x ** (c - 1)) * np.array([(i + c) * x ** i for i in range(n + 1)])
+            else:
+                x_series = (x ** c) * np.array([x ** i for i in range(n + 1)])
 
-    def _K(self, tau):
-        def _integrand(t, state):
-            _temp = self.alpha[state] * self.s_bar[state] * self._D(t)[state] \
-                   + self.gamma[state] * self.nu_bar[state] * self._F(t)[state]
-            return _temp
-        temp = np.array([integrate.quad(_integrand, 0, tau, args=(state,)) for state in [0, 1]])
-        return temp
+            temp = a_series * x_series
+            temp = np.sum(temp, axis=0)
+            return temp
+
+        def _Q(x, n, derivative=False):
+            """
+            :param x: (m X 1)
+            :param n:
+            :param derivative:
+            :return: (m X 1)
+            """
+            ones = np.ones(self.m)
+            zeros = np.zeros(self.m)
+            b = (_Q_part(ones, c=zeros, n=n, derivative=True) + _Q_part(ones, c=zeros, n=n, derivative=False) * beta) \
+                / (_Q_part(ones, c=1-alpha_bar, n=n, derivative=False) * _Q_part(ones, c=zeros, n=n, derivative=True)
+                   - _Q_part(ones, c=zeros, n=n, derivative=False) * _Q_part(ones, c=1-alpha_bar, n=n, derivative=True))
+            a = (1 - _Q_part(ones, c=1-alpha_bar, n=n, derivative=False) * b) / _Q_part(ones, c=0, n=n, derivative=False)
+
+            if derivative:
+                return (
+                    a * _Q_part(x, c=np.zeros(self.m), n=n, derivative=True)
+                    + b * _Q_part(x, c=1 - alpha_bar, n=n, derivative=True)
+                )
+            else:
+                return a * _Q_part(x, c=np.zeros(self.m), n=n) + b * _Q_part(x, c=1-alpha_bar, n=n)
+
+        def _H(tau, n, derivative=False):
+            """
+            :param tau: maturity
+            :param n: series sum terminal
+            :param derivative:
+            :return: (m X 1)
+            """
+            if derivative:
+                return (
+                    -self.alpha * beta * _H(tau, n, derivative=False)
+                    - self.alpha * np.exp(-self.alpha * (beta + 1) * tau)
+                    * _Q(np.exp(-self.alpha * tau), n=n, derivative=True)
+                )
+            else:
+                return np.exp(-self.alpha * beta * tau) * _Q(np.exp(-self.alpha * tau), n=n)
+        n = 100
+        temp = _H(tau, n, derivative=True)
+        F = - 2 /self.zeta ** 2 * temp / _H(tau, n, derivative=False)
+        K = self.s_bar * (self._D(tau) - tau) - 2 * self.gamma * self._D(tau) / self.zeta ** 2 * temp
+        return [F, K]
+
 
 if __name__=="__main__":
-    test_result = Valuation()
-    test_result.bond()
+    # # delta
+    # base_param = np.array([-0.475, -0.134])
+    # scale = np.arange(0.3, 1, 0.02)
+
+    # # alpha
+    # base_param = np.array([0.056, 0.050])
+    # scale = np.arange(1, 1.3, 0.02)
+
+    # # s_bar
+    # base_param = np.array([0.079, 0.071])
+    # scale = np.arange(0.1, 1.3, 0.1)
+
+    # # zeta
+    # base_param = np.array([0.006, 0.012])
+    # scale = np.arange(0.9, 1.0, 0.001)
+
+    # nu_bar
+    base_param = np.array([0.531 * 10 ** (-6), 1.062 * 10 ** (-6)])
+    scale = np.arange(-2., 10., 1.)
+
+    bond_list = []
+    european_list = []
+    american_list = []
+    american_list2 = []
+    american_list3 = []
+
+
+    for multiplier in tqdm(scale):
+        # print('multiplier', multiplier)
+        scaled = base_param * 10. ** np.array([multiplier, 0])
+        # scaled = base_param * np.array([multiplier, 1])
+        # scaled = base_param * multiplier
+        test_result = Valuation(nu_bar=scaled)
+
+        bond = test_result.bond()
+        bond_list.append(bond)
+        # print('bond', bond)
+
+        european_option = test_result.european_option()
+        european_list.append(european_option)
+        # print('europian', european_option)
+        american_option1 = test_result.american_option(1)
+        american_option2 = test_result.american_option(2)
+        american_option3 = test_result.american_option(3)
+        american_list2.append(american_option2)
+        american_list3.append(american_option3)
+
+        american_option = 1/2 * american_option1 - 4 * american_option2 + 9/2 * american_option3
+        american_list.append(american_option)
+        # print('american', american_option)
+
+    bond_list = np.array(bond_list)
+    european_list = np.array(european_list)
+    american_list = np.array(american_list)
+
+    import matplotlib.pyplot as plt
+    plt.plot(scale, bond_list[:, 0])
+    # plt.plot(scale, np.log(bond_list[:, 1]))
+    plt.plot(scale, european_list[:, 0])
+    plt.plot(scale, american_list[:, 0])
+    plt.legend(['Bond', 'European', 'American'])
+    # plt.xlabel('Parameter Multiplier')
+    plt.xlabel('Parameter Multiplier (10^Multiplier)')
+    plt.ylabel('Value')
+    # plt.ylabel('Value (log scale)')
+    plt.show()
+
+    plt.plot(scale, bond_list[:, 1])
+    # plt.plot(scale, np.log(bond_list[:, 1]))
+    plt.plot(scale, european_list[:, 1])
+    plt.plot(scale, american_list[:, 1])
+    plt.legend(['Bond', 'European', 'American'])
+
+    # plt.xlabel('Parameter Multiplier')
+    plt.xlabel('Parameter Multiplier (10^Multiplier)')
+    plt.ylabel('Value')
+    # plt.ylabel('Value (log scale)')
+    plt.show()
+
+    print('bond', bond_list)
+    print('european', european_list)
+    print('american', american_list)
+    print('american2', np.array(american_list2))
+    print('american3', np.array(american_list3))
